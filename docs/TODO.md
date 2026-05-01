@@ -6,11 +6,11 @@
 
 ```text
 当前阶段：阶段 1 - SOCKS5 与 Session 基础
-当前重点：定义 SessionId、TransactionId、FlowId、TargetAddr、IngressSource 与基础会话状态类型
-最近完成：已补充 Apache License 2.0 标准协议文本，并将 workspace license metadata 更新为 Apache-2.0
-下一步：按 docs/PROPOSAL.md 的状态模型实现 session 基础类型与首批单元测试
+当前重点：阶段 1 主体实现已完成，保留 ingress 扩展测试与后续 handler 契约接入事项
+最近完成：已实现 Session 基础类型、SOCKS5 method negotiation、no-auth、CONNECT 解析、reply code 映射、阻塞式 SOCKS5 ingress、SessionInit 前置策略执行点和 close reason 记录；已通过功能性审查与代码质量复审
+下一步：进入阶段 2，定义 Decision、HandlerOutcome、HandlerContext 与线性 SessionChain 调度基础
 阻塞项：无
-最后同步时间：2026-04-30
+最后同步时间：2026-05-01
 ```
 
 ## 开发状态维护规则
@@ -45,18 +45,37 @@
 
 目标：实现 SOCKS5 TCP `CONNECT` 接入，建立 Session 生命周期与基础事件。
 
-- [ ] 定义 `SessionId`、`TransactionId`、`FlowId`、`TargetAddr`、`IngressSource`。
-- [ ] 定义 `SessionState`、`ProcessingMode`、`ProtocolHint`、`TlsPolicy`、`ApplicationProtocol`。
-- [ ] 实现 SOCKS5 method negotiation。
-- [ ] 实现 SOCKS5 no-auth。
-- [ ] 预留 username/password auth 结构。
-- [ ] 实现 SOCKS5 `CONNECT` 请求解析，支持 IPv4、IPv6、domain。
-- [ ] 实现 SOCKS5 reply code 映射。
-- [ ] 实现 `SessionInitHandler` 前置策略执行点。
-- [ ] 实现 SOCKS5 success 回复时机：连接级策略通过后再回复 success。
-- [ ] 实现 session close reason 记录。
-- [ ] 添加 SOCKS5 negotiation、auth、CONNECT parser 单元测试。
-- [ ] 添加 `curl --socks5-hostname` 明文 HTTP smoke test 方案。
+- [x] 定义 `SessionId`、`TransactionId`、`FlowId`、`TargetAddr`、`IngressSource`。
+- [x] 定义 `SessionState`、`ProcessingMode`、`ProtocolHint`、`TlsPolicy`、`ApplicationProtocol`。
+- [x] 实现 SOCKS5 method negotiation。
+- [x] 实现 SOCKS5 no-auth。
+- [x] 预留 username/password auth 结构。
+- [x] 实现 SOCKS5 `CONNECT` 请求解析，支持 IPv4、IPv6、domain。
+- [x] 实现 SOCKS5 reply code 映射。
+- [x] 实现 `SessionInitHandler` 前置策略执行点。
+- [x] 实现 SOCKS5 success 回复时机：连接级策略通过后再回复 success。
+- [x] 实现 session close reason 记录。
+- [x] 添加 SOCKS5 negotiation、auth、CONNECT parser 单元测试。
+- [x] 添加 `curl --socks5-hostname` 明文 HTTP smoke test 方案。
+- [ ] 补充 SOCKS5 ingress 普通 I/O 错误保持为 `Socks5IngressError::Io` 的测试。
+- [ ] 补充 SOCKS5 ingress domain、IPv6 成功路径与 unsupported ATYP 错误映射测试。
+
+### 阶段 1 smoke test 方案
+
+当前 core 只有库接口，尚未提供可启动的二进制入口。以下方案作为后续接入 Raw tunnel、HTTP 明文透传或测试 harness 后的 smoke test 基准：
+
+```powershell
+# 1. 启动本地 HTTP 服务
+python -m http.server 18080
+
+# 2. 启动基于 mitm-core 的 SOCKS5 listener，监听 127.0.0.1:1080
+# 该启动命令将在 CoreHandle/start 或测试 harness 实现后补充。
+
+# 3. 通过 SOCKS5 访问本地 HTTP 服务
+curl --socks5-hostname 127.0.0.1:1080 http://127.0.0.1:18080/
+```
+
+预期行为：SOCKS5 method negotiation 选择 no-auth；CONNECT 目标为 `127.0.0.1:18080`；连接级策略通过后返回 SOCKS5 success；后续 HTTP 明文请求由阶段 3 或阶段 4 的 Raw tunnel/HTTP adapter 继续处理。
 
 ## 阶段 2：Handler 契约与线性 SessionChain
 
