@@ -2,12 +2,13 @@
 
 #![allow(clippy::module_name_repetitions)]
 
-use std::{error::Error, fmt};
+use std::{error::Error, fmt, net::TcpStream};
 
 use crate::{
     intercept::InterceptSpec,
     observability::AuditEvent,
     session::{ApplicationProtocol, ProcessingMode, Session, TargetAddr, TlsPolicy},
+    upstream::RawTunnelReport,
 };
 
 /// Handler execution phase used by decision validation.
@@ -85,24 +86,26 @@ pub struct HandlerOutcome {
     pub control: HandlerResult,
 }
 
-/// Current stream ownership marker used by handler tests and chain state.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Current downstream stream ownership container used by handler chain state.
+#[derive(Debug)]
 pub enum StreamSlot {
-    /// Stream has not been attached yet.
-    Pending,
     /// Raw downstream stream is available.
-    Raw,
+    Raw(TcpStream),
     /// Prefix bytes were read and need replay.
     Peeked {
         /// Buffered prefix bytes.
         prefix: Vec<u8>,
+        /// Downstream stream after the prefix bytes were consumed.
+        stream: TcpStream,
     },
     /// TLS `ClientHello` bytes were parsed and need replay.
     TlsClientHelloParsed {
         /// Raw `ClientHello` bytes.
         raw_client_hello: Vec<u8>,
+        /// Downstream stream after the `ClientHello` bytes were consumed.
+        stream: TcpStream,
     },
-    /// Stream is decrypted and associated with an application protocol.
+    /// Stream is decrypted. The real TLS stream is introduced with TLS MITM.
     Decrypted {
         /// Negotiated or detected application protocol.
         app_protocol: ApplicationProtocol,
@@ -111,8 +114,33 @@ pub enum StreamSlot {
     Closed,
 }
 
+impl StreamSlot {
+    /// Moves the current stream slot out and leaves the context closed.
+    #[must_use]
+    pub fn take(&mut self) -> Self {
+        std::mem::replace(self, Self::Closed)
+    }
+
+    /// Splits the owned stream into replay prefix bytes and raw TCP stream.
+    ///
+    /// # Errors
+    ///
+    /// Returns the original slot when it does not contain a pre-TLS raw stream.
+    pub fn into_replay_parts(self) -> Result<(Vec<u8>, TcpStream), Self> {
+        match self {
+            Self::Raw(stream) => Ok((Vec::new(), stream)),
+            Self::Peeked { prefix, stream } => Ok((prefix, stream)),
+            Self::TlsClientHelloParsed {
+                raw_client_hello,
+                stream,
+            } => Ok((raw_client_hello, stream)),
+            other => Err(other),
+        }
+    }
+}
+
 /// Mutable context shared by a linear handler chain.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct HandlerContext {
     /// Phase currently executed by this chain.
     pub phase: HandlerPhase,
@@ -130,6 +158,8 @@ pub struct HandlerContext {
     pub mock_response: Option<HttpResponseSpec>,
     /// Audit events emitted while decisions are applied or rejected.
     pub audit_events: Vec<AuditEvent>,
+    /// Final raw tunnel transfer report recorded by `RawTunnelHandler`.
+    pub raw_tunnel_report: Option<RawTunnelReport>,
 }
 
 /// Handler executed by [`run_handler_chain`].

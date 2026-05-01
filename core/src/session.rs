@@ -256,12 +256,16 @@ pub enum CloseReason {
     ClientClosed,
     /// Upstream peer closed the upstream connection.
     UpstreamClosed,
+    /// Upstream TCP connection could not be established.
+    UpstreamConnectFailed,
     /// Policy explicitly dropped the session.
     PolicyDrop,
     /// Protocol parser or state machine rejected the traffic.
     ProtocolError,
     /// Session timed out.
     Timeout,
+    /// Raw tunnel or other relay I/O failed after the session started.
+    TunnelIoError,
     /// Internal processing failed.
     InternalError,
 }
@@ -271,9 +275,11 @@ impl fmt::Display for CloseReason {
         let reason = match self {
             Self::ClientClosed => "client closed",
             Self::UpstreamClosed => "upstream closed",
+            Self::UpstreamConnectFailed => "upstream connect failed",
             Self::PolicyDrop => "policy drop",
             Self::ProtocolError => "protocol error",
             Self::Timeout => "timeout",
+            Self::TunnelIoError => "tunnel io error",
             Self::InternalError => "internal error",
         };
         f.write_str(reason)

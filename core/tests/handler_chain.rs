@@ -1,8 +1,14 @@
 //! Handler chain runner behavior tests.
 
-use std::{cell::Cell, net::SocketAddr, time::Duration};
+use std::{
+    cell::Cell,
+    io::{Read, Write},
+    net::{SocketAddr, TcpListener, TcpStream},
+    time::Duration,
+};
 
 use mitm_core::{
+    classify::{ProtocolClassifierHandler, ReplayStream, H2C_PRIOR_KNOWLEDGE},
     handler::{
         run_handler_chain, ClientEffect, Decision, DecisionError, DecisionKind, DropScope,
         DropSpec, Handler, HandlerContext, HandlerOutcome, HandlerPhase, HandlerResult,
@@ -10,7 +16,10 @@ use mitm_core::{
     },
     intercept::{InterceptSpec, TimeoutAction},
     observability::AuditEvent,
-    session::{IngressSource, ProcessingMode, Session, SessionId, TargetAddr, TlsPolicy},
+    session::{
+        CloseReason, IngressSource, ProcessingMode, ProtocolHint, Session, SessionId, SessionState,
+        TargetAddr, TlsPolicy,
+    },
 };
 
 fn test_session() -> Session {
@@ -26,13 +35,92 @@ fn context(phase: HandlerPhase) -> HandlerContext {
     HandlerContext {
         phase,
         session: test_session(),
-        stream: StreamSlot::Pending,
+        stream: StreamSlot::Raw(loopback_stream()),
         pending_patches: PatchSet::default(),
         pause: None,
         drop_action: None,
         mock_response: None,
         audit_events: Vec::new(),
+        raw_tunnel_report: None,
     }
+}
+
+fn loopback_stream() -> TcpStream {
+    connected_stream_pair().0
+}
+
+fn connected_stream_pair() -> (TcpStream, TcpStream) {
+    let listener = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0))).unwrap();
+    let addr = listener.local_addr().unwrap();
+    let client = TcpStream::connect(addr).unwrap();
+    let (server, _) = listener.accept().unwrap();
+
+    (server, client)
+}
+
+fn classifier_context_with_downstream_bytes(prefix: &[u8]) -> HandlerContext {
+    let (server, mut client) = connected_stream_pair();
+    client.write_all(prefix).unwrap();
+    let mut ctx = context(HandlerPhase::Connect);
+    ctx.session.set_state(SessionState::ConnectAccepted);
+    ctx.stream = StreamSlot::Raw(server);
+    ctx
+}
+
+fn take_peeked_stream(ctx: &mut HandlerContext) -> (Vec<u8>, TcpStream) {
+    match ctx.stream.take() {
+        StreamSlot::Peeked { prefix, stream } => (prefix, stream),
+        other => panic!("expected peeked stream, got {other:?}"),
+    }
+}
+
+fn replay_all(prefix: Vec<u8>, stream: TcpStream) -> Vec<u8> {
+    let mut replay = ReplayStream::new(prefix, stream);
+    let mut output = Vec::new();
+    replay.read_to_end(&mut output).unwrap();
+    output
+}
+
+#[test]
+fn stream_slot_take_leaves_closed_slot_and_returns_owned_stream() {
+    let stream = loopback_stream();
+    let mut slot = StreamSlot::Peeked {
+        prefix: b"abc".to_vec(),
+        stream,
+    };
+
+    let taken = slot.take();
+
+    assert!(matches!(slot, StreamSlot::Closed));
+    let (prefix, _) = taken
+        .into_replay_parts()
+        .expect("peeked stream can be replayed");
+    assert_eq!(prefix, b"abc".to_vec());
+}
+
+#[test]
+fn stream_slot_into_replay_parts_supports_pre_tls_stream_states() {
+    let raw = StreamSlot::Raw(loopback_stream());
+    let (raw_prefix, _) = raw.into_replay_parts().expect("raw stream can replay");
+    assert!(raw_prefix.is_empty());
+
+    let peeked = StreamSlot::Peeked {
+        prefix: b"prefix".to_vec(),
+        stream: loopback_stream(),
+    };
+    let (peeked_prefix, _) = peeked
+        .into_replay_parts()
+        .expect("peeked stream can replay");
+    assert_eq!(peeked_prefix, b"prefix".to_vec());
+
+    let client_hello = StreamSlot::TlsClientHelloParsed {
+        raw_client_hello: b"client-hello".to_vec(),
+        stream: loopback_stream(),
+    };
+    let (client_hello_prefix, _) = client_hello
+        .into_replay_parts()
+        .expect("client hello stream can replay");
+    assert_eq!(client_hello_prefix, b"client-hello".to_vec());
 }
 
 struct FixedHandler {
@@ -328,4 +416,92 @@ fn same_handler_decision_is_validated_against_phase_before_handler_runs() {
             ..
         }] if handler == "connect-to-request-with-mock"
     ));
+}
+
+#[test]
+fn protocol_classifier_handler_stops_and_closes_on_incomplete_eof() {
+    let classifier = ProtocolClassifierHandler::new();
+    let mut ctx = classifier_context_with_downstream_bytes(b"G");
+    let after_classifier = FixedHandler::new("after-classifier", None, HandlerResult::Continue);
+
+    run_handler_chain(&mut ctx, &[&classifier, &after_classifier]).unwrap();
+
+    assert_eq!(after_classifier.calls(), 0);
+    assert_eq!(ctx.session.state(), SessionState::Closed);
+    assert_eq!(ctx.session.mode(), ProcessingMode::Closed);
+    assert_eq!(ctx.session.close_reason(), Some(CloseReason::ProtocolError));
+    assert!(matches!(ctx.stream, StreamSlot::Closed));
+}
+
+#[test]
+fn protocol_classifier_handler_classifies_http1_as_inspectable_stream() {
+    let prefix = b"GET / HTTP/1.1\r\n".to_vec();
+    let classifier = ProtocolClassifierHandler::new();
+    let mut ctx = classifier_context_with_downstream_bytes(&prefix);
+
+    run_handler_chain(&mut ctx, &[&classifier]).unwrap();
+
+    assert_eq!(ctx.session.protocol(), ProtocolHint::Http1);
+    assert_eq!(ctx.session.mode(), ProcessingMode::Inspect);
+    assert_eq!(ctx.session.state(), SessionState::InspectingHttp);
+    assert!(ctx.session.tags().contains("proto:http1"));
+    assert!(ctx.session.tags().contains("mode:inspect"));
+    assert!(ctx.session.tags().contains("state:inspecting_http"));
+    let (peeked, stream) = take_peeked_stream(&mut ctx);
+    assert_eq!(replay_all(peeked, stream), prefix);
+}
+
+#[test]
+fn protocol_classifier_handler_classifies_tls_without_tls_policy() {
+    let prefix = [0x16, 0x03, 0x03, 0x00, 0x2e, 0x01, 0x00, 0x00].to_vec();
+    let classifier = ProtocolClassifierHandler::new();
+    let mut ctx = classifier_context_with_downstream_bytes(&prefix);
+
+    run_handler_chain(&mut ctx, &[&classifier]).unwrap();
+
+    assert_eq!(ctx.session.protocol(), ProtocolHint::Tls);
+    assert_eq!(ctx.session.mode(), ProcessingMode::Inspect);
+    assert_eq!(ctx.session.state(), SessionState::Classifying);
+    assert_eq!(ctx.session.tls_policy(), TlsPolicy::Undecided);
+    assert!(ctx.session.tags().contains("proto:tls"));
+    assert!(ctx.session.tags().contains("transport:tls"));
+    assert!(ctx.session.tags().contains("tls:undecided"));
+    let (peeked, stream) = take_peeked_stream(&mut ctx);
+    assert_eq!(replay_all(peeked, stream), prefix);
+}
+
+#[test]
+fn protocol_classifier_handler_classifies_h2c_as_raw_tunnel() {
+    let prefix = H2C_PRIOR_KNOWLEDGE.to_vec();
+    let classifier = ProtocolClassifierHandler::new();
+    let mut ctx = classifier_context_with_downstream_bytes(&prefix);
+
+    run_handler_chain(&mut ctx, &[&classifier]).unwrap();
+
+    assert_eq!(ctx.session.protocol(), ProtocolHint::H2c);
+    assert_eq!(ctx.session.mode(), ProcessingMode::RawTunnel);
+    assert_eq!(ctx.session.state(), SessionState::RawTunneling);
+    assert!(ctx.session.tags().contains("proto:h2c"));
+    assert!(ctx.session.tags().contains("mode:raw_tunnel"));
+    assert!(ctx.session.tags().contains("state:raw_tunneling"));
+    let (peeked, stream) = take_peeked_stream(&mut ctx);
+    assert_eq!(replay_all(peeked, stream), prefix);
+}
+
+#[test]
+fn protocol_classifier_handler_classifies_raw_tcp_as_raw_tunnel() {
+    let prefix = b"SSH-2.0-openssh\r\n".to_vec();
+    let classifier = ProtocolClassifierHandler::new();
+    let mut ctx = classifier_context_with_downstream_bytes(&prefix);
+
+    run_handler_chain(&mut ctx, &[&classifier]).unwrap();
+
+    assert_eq!(ctx.session.protocol(), ProtocolHint::RawTcp);
+    assert_eq!(ctx.session.mode(), ProcessingMode::RawTunnel);
+    assert_eq!(ctx.session.state(), SessionState::RawTunneling);
+    assert!(ctx.session.tags().contains("proto:raw_tcp"));
+    assert!(ctx.session.tags().contains("mode:raw_tunnel"));
+    assert!(ctx.session.tags().contains("state:raw_tunneling"));
+    let (peeked, stream) = take_peeked_stream(&mut ctx);
+    assert_eq!(replay_all(peeked, stream), prefix);
 }

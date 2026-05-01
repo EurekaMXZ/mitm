@@ -5,11 +5,11 @@
 本节用于在上下文压缩、会话切换或多人协作时保留开发状态。每次开始开发前必须先读取并同步本节；每次结束开发后必须更新本节和下方阶段清单。
 
 ```text
-当前阶段：阶段 2 Task 3 代码质量审查修正已完成
-当前重点：HandlerContext、StreamSlot、Tag 派生、线性 chain runner、非法 Decision 审计与状态迁移测试均已完成验证
-最近完成：已实现 Session 基础类型、SOCKS5 method negotiation、no-auth、CONNECT 解析、reply code 映射、阻塞式 SOCKS5 ingress、SessionInit 前置策略执行点和 close reason 记录；已补充 SOCKS5 ingress 普通 I/O 错误、domain、IPv6 和 unsupported ATYP 覆盖测试；已实现阶段 2 Task 2 的 Handler 基础类型、Intercept 基础类型、最小 AuditEvent、Decision 与 Patch 阶段合法性校验，并补充 Decision 适用矩阵测试；已完成阶段 2 Task 3 的 HandlerContext、StreamSlot、Tag 派生、线性 chain runner、非法 Decision 审计事件和状态迁移测试；已修正 Task 3 审查反馈中的 Pause 停止语义、Session 强状态 getter、runner 当前阶段校验说明、TagSet 单值命名空间覆盖、runner 阶段权威来源和多余 Decision 复制
-下一步：执行阶段 2 收尾验证与状态整理，保持阶段 3 内容未开始
-阻塞项：无
+当前阶段：阶段 3 Task 3B 质量审查修正已完成
+当前重点：第三阶段已完成最终验证与双 reviewer 复审，当前重点转入阶段 4 的 HTTP/1.1 明文适配准备
+最近完成：已实现 Session 基础类型、SOCKS5 method negotiation、no-auth、CONNECT 解析、reply code 映射、阻塞式 SOCKS5 ingress、SessionInit 前置策略执行点和 close reason 记录；已补充 SOCKS5 ingress 普通 I/O 错误、domain、IPv6 和 unsupported ATYP 覆盖测试；已实现阶段 2 Task 2 的 Handler 基础类型、Intercept 基础类型、最小 AuditEvent、Decision 与 Patch 阶段合法性校验，并补充 Decision 适用矩阵测试；已完成阶段 2 Task 3 的 HandlerContext、StreamSlot、Tag 派生、线性 chain runner、非法 Decision 审计事件和状态迁移测试；已修正 Task 3 审查反馈中的 Pause 停止语义、Session 强状态 getter、runner 当前阶段校验说明、TagSet 单值命名空间覆盖、runner 阶段权威来源和多余 Decision 复制；已删除 docs/superpowers 目录；阶段 3 Task 1 已完成同步 PeekBuffer 与 ReplayStream 基础实现，并补充前缀顺序回放、分段读取、一次性消费测试；已修正 Task 1 功能审查反馈中的 PeekBuffer 单次读取语义与 ReplayStream prefix 优先返回语义；阶段 3 Task 2 已完成 HTTP/1、TLS ClientHello、h2c prior knowledge、Raw TCP 分类基础，h2c 与 Raw TCP 当前进入 RawTunnel 模式，TLS 仅记录协议提示；阶段 3 Task 3A 已完成 StreamSlot 真实 stream 所有权容器、ctx.stream 分类读取入口、NeedMore/Complete 纯函数结果、handler 层读取结果控制语义、PeekBuffer::from_vec、ReplayStream Write 委托和 loopback TcpStream replay 完整字节序测试；阶段 3 Task 3B 已完成同步阻塞版 RawTunnelHandler、raw_tunnel_report、会话级 `UpstreamConnectFailed` 与 `TunnelIoError` 关闭原因映射、首事件关闭归因保留规则，以及稳健的 raw tunnel upstream connect fail 与首事件保留测试；本轮已完成 `cargo fmt --all`、`cargo fmt --all -- --check`、`cargo test --workspace`、`cargo clippy --workspace --all-targets -- -D warnings`，并完成功能性审查与代码质量审查回收
+下一步：进入阶段 4，围绕 HTTP/1.1 request/response 解析、捕获与 HttpAdapter 事务循环开展实现；阶段 3 的补充测试项纳入后续补强
+阻塞项：无，保留若干非阻塞测试补强项
 最后同步时间：2026-05-01
 ```
 
@@ -78,18 +78,23 @@
 
 目标：实现 TCP 首包识别、统一 replay buffer、Raw TCP 透传。
 
-- [ ] 实现 `PeekBuffer` API。
-- [ ] 实现 `ReplayStream`，保证已读字节按原始顺序回放。
-- [ ] 实现 `ProtocolClassifierHandler`。
-- [ ] 识别 HTTP/1.1 方法前缀。
-- [ ] 识别 TLS ClientHello 前缀。
-- [ ] 识别 h2c prior knowledge，并按首版策略进入 raw tunnel 或 unsupported。
-- [ ] 将 `ProtocolHint::RawTcp` 映射到 `ProcessingMode::RawTunnel`。
-- [ ] 实现 `RawTunnelHandler` 的 upstream TCP 连接与双向复制。
-- [ ] 实现 raw tunnel 字节计数、耗时、关闭原因。
-- [ ] 添加 HTTP/1、TLS、h2c、Raw TCP 分类测试。
-- [ ] 添加 replay buffer 顺序与一次性消费测试。
-- [ ] 添加 raw tunnel 回放首包测试。
+- [x] 实现 `PeekBuffer` API。（Task 1 已补充同步 `Read` 版本基础实现与行为测试；Task 2 已补充 `into_vec` 所有权转移接口；Task 3A 已补充 `from_vec`。）
+- [x] 实现 `ReplayStream`，保证已读字节按原始顺序回放。（Task 1 已补充同步 `Read` 版本基础实现与行为测试；Task 2 已将拆出接口调整为 `try_into_inner`，剩余前缀存在时返回原 replay stream；Task 3A 已补充 `Write` 委托。）
+- [x] 实现 `ProtocolClassifierHandler`。（Task 3A 已改为从 `ctx.stream` 持有的真实 downstream `TcpStream` 读取 prefix；审查修正已补充分层读取结果与失败停止语义。）
+- [x] 识别 HTTP/1.1 方法前缀。
+- [x] 识别 TLS ClientHello 前缀。
+- [x] 识别 h2c prior knowledge，并按首版策略进入 raw tunnel 或 unsupported。
+- [x] 将 `ProtocolHint::RawTcp` 映射到 `ProcessingMode::RawTunnel`。
+- [x] 将 `StreamSlot` 调整为真实 downstream stream 所有权容器，并补充所有权移动辅助方法。
+- [x] 分类纯函数区分数据不足结果，短前缀保持 `NeedMore`。
+- [x] 实现 `RawTunnelHandler` 的 upstream TCP 连接与双向复制。
+- [x] 实现 raw tunnel 字节计数、耗时、关闭原因。
+- [x] 添加 HTTP/1、TLS、h2c、Raw TCP 分类测试。（Task 3A 已改为 loopback `TcpStream` 驱动 handler；审查修正已改为通过 `ReplayStream` 校验完整字节序。）
+- [x] 添加 replay buffer 顺序与一次性消费测试。
+- [x] 添加 raw tunnel 回放首包测试。
+- [ ] 补充 `ProtocolClassifierHandler` 在 `NeedMore`、`LimitExhausted`、`IoError` 三类结果下的 handler 级停止语义测试。（审查后补强项）
+- [ ] 补充 `StreamSlot::TlsClientHelloParsed` 进入 `RawTunnelHandler` 时的回放测试。（审查后补强项）
+- [ ] 补充 `RawTunnelHandler` 的 `ClientClosed` 与 `TunnelIoError` 关闭原因测试。（审查后补强项）
 
 ## 阶段 4：HTTP/1.1 明文捕获与透传
 
