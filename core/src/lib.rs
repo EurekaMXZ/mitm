@@ -8,7 +8,7 @@
 pub mod classify;
 /// Runtime configuration models.
 pub mod config;
-/// Linear handler-chain contracts and runners.
+/// Linear handler-chain contracts and decision validation.
 pub mod handler;
 /// HTTP parsing, serialization, and body state management.
 pub mod http;

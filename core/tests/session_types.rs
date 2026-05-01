@@ -95,12 +95,12 @@ fn session_new_sets_default_state_and_processing_fields() {
     assert_eq!(session.client_addr, client);
     assert_eq!(session.target, target);
     assert_eq!(session.source, source);
-    assert_eq!(session.state, SessionState::Socks5Connected);
-    assert_eq!(session.protocol, ProtocolHint::Unknown);
-    assert_eq!(session.mode, ProcessingMode::Inspect);
-    assert_eq!(session.tls_policy, TlsPolicy::Undecided);
-    assert_eq!(session.application_protocol, ApplicationProtocol::Unknown);
-    assert_eq!(session.close_reason, None);
+    assert_eq!(session.state(), SessionState::Socks5Connected);
+    assert_eq!(session.protocol(), ProtocolHint::Unknown);
+    assert_eq!(session.mode(), ProcessingMode::Inspect);
+    assert_eq!(session.tls_policy(), TlsPolicy::Undecided);
+    assert_eq!(session.application_protocol(), ApplicationProtocol::Unknown);
+    assert_eq!(session.close_reason(), None);
 }
 
 #[test]
@@ -115,9 +115,9 @@ fn session_close_records_reason_and_marks_closed() {
 
     session.close(CloseReason::PolicyDrop);
 
-    assert_eq!(session.state, SessionState::Closed);
-    assert_eq!(session.mode, ProcessingMode::Closed);
-    assert_eq!(session.close_reason, Some(CloseReason::PolicyDrop));
+    assert_eq!(session.state(), SessionState::Closed);
+    assert_eq!(session.mode(), ProcessingMode::Closed);
+    assert_eq!(session.close_reason(), Some(CloseReason::PolicyDrop));
     assert_eq!(CloseReason::PolicyDrop.to_string(), "policy drop");
 }
 

@@ -2,16 +2,16 @@
 
 use std::{
     cell::RefCell,
-    io::{Cursor, Write},
-    net::{IpAddr, Ipv4Addr, SocketAddr},
+    io::{Cursor, ErrorKind, Read, Write},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     rc::Rc,
 };
 
 use mitm_core::{
     session::{CloseReason, IngressSource, SessionId, SessionState, TargetAddr},
     socks5::{
-        AcceptedSocks5Session, RejectedSocks5Session, SessionInitDecision, Socks5Error,
-        Socks5Ingress, Socks5IngressOutcome, Socks5ReplyCode,
+        AcceptedSocks5Session, RejectedSocks5Session, SessionInitDecision, Socks5Command,
+        Socks5Error, Socks5Ingress, Socks5IngressError, Socks5IngressOutcome, Socks5ReplyCode,
     },
 };
 
@@ -42,7 +42,7 @@ mod socks5_ingress {
                 SessionId::new(1),
                 client,
                 |session| {
-                    assert_eq!(session.state, SessionState::Socks5Negotiated);
+                    assert_eq!(session.state(), SessionState::Socks5Negotiated);
                     assert_eq!(session.client_addr, client);
                     assert_eq!(session.target, expected_target);
                     assert_eq!(session.source, IngressSource::Socks5 { listener, client });
@@ -75,6 +75,161 @@ mod socks5_ingress {
         assert_eq!(
             written.borrow().as_slice(),
             &[0x05, 0x00, 0x05, 0x00, 0x00, 0x01, 127, 0, 0, 1, 0x04, 0x38,]
+        );
+    }
+
+    #[test]
+    fn ingress_io_error_is_reported_as_io_error() {
+        let listener = SocketAddr::from(([127, 0, 0, 1], 1080));
+        let client = SocketAddr::from(([127, 0, 0, 1], 50_011));
+        let mut reader = ErrorReader {
+            kind: ErrorKind::ConnectionReset,
+        };
+        let mut writer = Vec::new();
+        let ingress = Socks5Ingress::new(listener).unwrap();
+
+        let error = ingress
+            .accept(&mut reader, &mut writer, SessionId::new(12), client, |_| {
+                panic!("policy must not run after a stream read error")
+            })
+            .unwrap_err();
+
+        let Socks5IngressError::Io(error) = error else {
+            panic!("ordinary stream read error must be reported as I/O");
+        };
+
+        assert_eq!(error.kind(), ErrorKind::ConnectionReset);
+        assert!(writer.is_empty());
+    }
+
+    #[test]
+    fn domain_connect_success_path_is_accepted() {
+        let listener = SocketAddr::from(([127, 0, 0, 1], 1080));
+        let client = SocketAddr::from(([127, 0, 0, 1], 50_012));
+        let mut reader = Cursor::new(
+            [
+                &[0x05, 0x01, 0x00][..],
+                &[
+                    0x05, 0x01, 0x00, 0x03, 0x0b, b'e', b'x', b'a', b'm', b'p', b'l', b'e', b'.',
+                    b'c', b'o', b'm', 0x01, 0xbb,
+                ],
+            ]
+            .concat(),
+        );
+        let written = Rc::new(RefCell::new(Vec::new()));
+        let mut writer = SharedWriter::new(Rc::clone(&written));
+        let ingress = Socks5Ingress::new(listener).unwrap();
+        let expected_target = TargetAddr::domain("example.com", 443).unwrap();
+
+        let outcome = ingress
+            .accept(
+                &mut reader,
+                &mut writer,
+                SessionId::new(13),
+                client,
+                |session| {
+                    assert_eq!(session.state(), SessionState::Socks5Negotiated);
+                    assert_eq!(session.target, expected_target);
+                    assert_eq!(written.borrow().as_slice(), &[0x05, 0x00]);
+
+                    SessionInitDecision::Accept
+                },
+            )
+            .unwrap();
+
+        let Socks5IngressOutcome::Accepted(accepted) = outcome else {
+            panic!("domain CONNECT must be accepted");
+        };
+
+        assert_eq!(accepted.session.state(), SessionState::ConnectAccepted);
+        assert_eq!(accepted.session.target, expected_target);
+        assert_eq!(accepted.request.command, Socks5Command::Connect);
+        assert_eq!(accepted.request.target, expected_target);
+        assert_eq!(
+            written.borrow().as_slice(),
+            &[0x05, 0x00, 0x05, 0x00, 0x00, 0x01, 127, 0, 0, 1, 0x04, 0x38,]
+        );
+    }
+
+    #[test]
+    fn ipv6_connect_success_path_is_accepted() {
+        let listener = SocketAddr::from(([127, 0, 0, 1], 1080));
+        let client = SocketAddr::from(([127, 0, 0, 1], 50_013));
+        let mut reader = Cursor::new(
+            [
+                &[0x05, 0x01, 0x00][..],
+                &[
+                    0x05, 0x01, 0x00, 0x04, 0x20, 0x01, 0x0d, 0xb8, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x50,
+                ],
+            ]
+            .concat(),
+        );
+        let written = Rc::new(RefCell::new(Vec::new()));
+        let mut writer = SharedWriter::new(Rc::clone(&written));
+        let ingress = Socks5Ingress::new(listener).unwrap();
+        let expected_target = TargetAddr::ip(
+            IpAddr::V6(Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 1)),
+            80,
+        )
+        .unwrap();
+
+        let outcome = ingress
+            .accept(
+                &mut reader,
+                &mut writer,
+                SessionId::new(14),
+                client,
+                |session| {
+                    assert_eq!(session.state(), SessionState::Socks5Negotiated);
+                    assert_eq!(session.target, expected_target);
+                    assert_eq!(written.borrow().as_slice(), &[0x05, 0x00]);
+
+                    SessionInitDecision::Accept
+                },
+            )
+            .unwrap();
+
+        let Socks5IngressOutcome::Accepted(accepted) = outcome else {
+            panic!("IPv6 CONNECT must be accepted");
+        };
+
+        assert_eq!(accepted.session.state(), SessionState::ConnectAccepted);
+        assert_eq!(accepted.session.target, expected_target);
+        assert_eq!(accepted.request.command, Socks5Command::Connect);
+        assert_eq!(accepted.request.target, expected_target);
+        assert_eq!(
+            written.borrow().as_slice(),
+            &[0x05, 0x00, 0x05, 0x00, 0x00, 0x01, 127, 0, 0, 1, 0x04, 0x38,]
+        );
+    }
+
+    #[test]
+    fn unsupported_atyp_maps_to_address_type_not_supported_reply() {
+        let listener = SocketAddr::from(([127, 0, 0, 1], 1080));
+        let client = SocketAddr::from(([127, 0, 0, 1], 50_014));
+        let mut reader = Cursor::new([&[0x05, 0x01, 0x00][..], &[0x05, 0x01, 0x00, 0x09]].concat());
+        let mut writer = Vec::new();
+        let ingress = Socks5Ingress::new(listener).unwrap();
+
+        let outcome = ingress
+            .accept(&mut reader, &mut writer, SessionId::new(15), client, |_| {
+                panic!("policy must not run for unsupported address type")
+            })
+            .unwrap();
+
+        assert_eq!(
+            outcome,
+            Socks5IngressOutcome::Rejected(RejectedSocks5Session {
+                session: None,
+                error: Some(Socks5Error::UnsupportedAddressType),
+                reply_code: Socks5ReplyCode::AddressTypeNotSupported,
+                close_reason: None,
+            })
+        );
+        assert_eq!(
+            writer,
+            [0x05, 0x00, 0x05, 0x08, 0x00, 0x01, 127, 0, 0, 1, 0x04, 0x38,]
         );
     }
 
@@ -333,7 +488,7 @@ mod socks5_ingress {
                 SessionId::new(4),
                 client,
                 |session| {
-                    assert_eq!(session.state, SessionState::Socks5Negotiated);
+                    assert_eq!(session.state(), SessionState::Socks5Negotiated);
 
                     SessionInitDecision::Reject {
                         reply_code: Socks5ReplyCode::ConnectionNotAllowed,
@@ -348,8 +503,8 @@ mod socks5_ingress {
         };
         let session = rejection.session.expect("rejected session must be present");
 
-        assert_eq!(session.state, SessionState::Closed);
-        assert_eq!(session.close_reason, Some(CloseReason::PolicyDrop));
+        assert_eq!(session.state(), SessionState::Closed);
+        assert_eq!(session.close_reason(), Some(CloseReason::PolicyDrop));
         assert_eq!(rejection.error, None);
         assert_eq!(rejection.reply_code, Socks5ReplyCode::ConnectionNotAllowed);
         assert_eq!(rejection.close_reason, Some(CloseReason::PolicyDrop));
@@ -414,5 +569,19 @@ impl Write for SharedWriter {
 
     fn flush(&mut self) -> std::io::Result<()> {
         Ok(())
+    }
+}
+
+#[derive(Debug)]
+struct ErrorReader {
+    kind: ErrorKind,
+}
+
+impl Read for ErrorReader {
+    fn read(&mut self, _buf: &mut [u8]) -> std::io::Result<usize> {
+        Err(std::io::Error::new(
+            self.kind,
+            "injected stream read failure",
+        ))
     }
 }

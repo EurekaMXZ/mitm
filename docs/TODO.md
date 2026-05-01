@@ -5,10 +5,10 @@
 本节用于在上下文压缩、会话切换或多人协作时保留开发状态。每次开始开发前必须先读取并同步本节；每次结束开发后必须更新本节和下方阶段清单。
 
 ```text
-当前阶段：阶段 1 - SOCKS5 与 Session 基础
-当前重点：阶段 1 主体实现已完成，保留 ingress 扩展测试与后续 handler 契约接入事项
-最近完成：已实现 Session 基础类型、SOCKS5 method negotiation、no-auth、CONNECT 解析、reply code 映射、阻塞式 SOCKS5 ingress、SessionInit 前置策略执行点和 close reason 记录；已通过功能性审查与代码质量复审
-下一步：进入阶段 2，定义 Decision、HandlerOutcome、HandlerContext 与线性 SessionChain 调度基础
+当前阶段：阶段 2 Task 3 代码质量审查修正已完成
+当前重点：HandlerContext、StreamSlot、Tag 派生、线性 chain runner、非法 Decision 审计与状态迁移测试均已完成验证
+最近完成：已实现 Session 基础类型、SOCKS5 method negotiation、no-auth、CONNECT 解析、reply code 映射、阻塞式 SOCKS5 ingress、SessionInit 前置策略执行点和 close reason 记录；已补充 SOCKS5 ingress 普通 I/O 错误、domain、IPv6 和 unsupported ATYP 覆盖测试；已实现阶段 2 Task 2 的 Handler 基础类型、Intercept 基础类型、最小 AuditEvent、Decision 与 Patch 阶段合法性校验，并补充 Decision 适用矩阵测试；已完成阶段 2 Task 3 的 HandlerContext、StreamSlot、Tag 派生、线性 chain runner、非法 Decision 审计事件和状态迁移测试；已修正 Task 3 审查反馈中的 Pause 停止语义、Session 强状态 getter、runner 当前阶段校验说明、TagSet 单值命名空间覆盖、runner 阶段权威来源和多余 Decision 复制
+下一步：执行阶段 2 收尾验证与状态整理，保持阶段 3 内容未开始
 阻塞项：无
 最后同步时间：2026-05-01
 ```
@@ -57,39 +57,22 @@
 - [x] 实现 session close reason 记录。
 - [x] 添加 SOCKS5 negotiation、auth、CONNECT parser 单元测试。
 - [x] 添加 `curl --socks5-hostname` 明文 HTTP smoke test 方案。
-- [ ] 补充 SOCKS5 ingress 普通 I/O 错误保持为 `Socks5IngressError::Io` 的测试。
-- [ ] 补充 SOCKS5 ingress domain、IPv6 成功路径与 unsupported ATYP 错误映射测试。
-
-### 阶段 1 smoke test 方案
-
-当前 core 只有库接口，尚未提供可启动的二进制入口。以下方案作为后续接入 Raw tunnel、HTTP 明文透传或测试 harness 后的 smoke test 基准：
-
-```powershell
-# 1. 启动本地 HTTP 服务
-python -m http.server 18080
-
-# 2. 启动基于 mitm-core 的 SOCKS5 listener，监听 127.0.0.1:1080
-# 该启动命令将在 CoreHandle/start 或测试 harness 实现后补充。
-
-# 3. 通过 SOCKS5 访问本地 HTTP 服务
-curl --socks5-hostname 127.0.0.1:1080 http://127.0.0.1:18080/
-```
-
-预期行为：SOCKS5 method negotiation 选择 no-auth；CONNECT 目标为 `127.0.0.1:18080`；连接级策略通过后返回 SOCKS5 success；后续 HTTP 明文请求由阶段 3 或阶段 4 的 Raw tunnel/HTTP adapter 继续处理。
+- [x] 补充 SOCKS5 ingress 普通 I/O 错误保持为 `Socks5IngressError::Io` 的测试。
+- [x] 补充 SOCKS5 ingress domain、IPv6 成功路径与 unsupported ATYP 错误映射测试。
 
 ## 阶段 2：Handler 契约与线性 SessionChain
 
 目标：实现线性 handler chain 的调度基础，固定 `Decision`、`HandlerOutcome`、`HandlerContext` 的职责边界。
 
-- [ ] 定义 `Decision`、`PatchSet`、`PatchOp`、`DropSpec`、`InterceptSpec`、`ResumeDecision`。
-- [ ] 定义 `HandlerOutcome` 与 `HandlerResult`。
-- [ ] 实现 chain runner，统一应用 `Decision`。
-- [ ] 实现 `HandlerContext` 与 `StreamSlot` 基础结构。
-- [ ] 实现标签派生规则，确保强类型状态为权威来源。
-- [ ] 实现 `SetRawTunnel`、`SetTlsMitm`、`SetTlsBypass` 的合法阶段校验。
-- [ ] 实现非法 `Decision` 拒绝与审计事件。
-- [ ] 添加 Decision 适用矩阵单元测试。
-- [ ] 添加状态迁移与标签派生单元测试。
+- [x] 定义 `Decision`、`PatchSet`、`PatchOp`、`DropSpec`、`InterceptSpec`、`ResumeDecision`。
+- [x] 定义 `HandlerOutcome` 与 `HandlerResult`。
+- [x] 实现 chain runner，统一应用 `Decision`。
+- [x] 实现 `HandlerContext` 与 `StreamSlot` 基础结构。
+- [x] 实现标签派生规则，确保强类型状态为权威来源。
+- [x] 实现 `SetRawTunnel`、`SetTlsMitm`、`SetTlsBypass` 的合法阶段校验。
+- [x] 实现非法 `Decision` 拒绝与审计事件。
+- [x] 添加 Decision 适用矩阵单元测试。
+- [x] 添加状态迁移与标签派生单元测试。
 
 ## 阶段 3：协议识别、PeekBuffer 与 Raw Tunnel
 

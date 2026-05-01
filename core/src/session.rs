@@ -8,6 +8,8 @@ use std::{
     net::{IpAddr, SocketAddr},
 };
 
+use crate::tags::{derive_session_tags, TagSet};
+
 /// Identifier for a SOCKS5 TCP connection session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SessionId(u64);
@@ -290,17 +292,19 @@ pub struct Session {
     /// Ingress source that accepted the session.
     pub source: IngressSource,
     /// Current session state.
-    pub state: SessionState,
+    state: SessionState,
     /// Current protocol classification hint.
-    pub protocol: ProtocolHint,
+    protocol: ProtocolHint,
     /// Current processing mode.
-    pub mode: ProcessingMode,
+    mode: ProcessingMode,
     /// Current TLS policy.
-    pub tls_policy: TlsPolicy,
+    tls_policy: TlsPolicy,
     /// Current application protocol.
-    pub application_protocol: ApplicationProtocol,
+    application_protocol: ApplicationProtocol,
+    /// Tags derived from the current strong session state.
+    tags: TagSet,
     /// Recorded close reason, if the session has closed.
-    pub close_reason: Option<CloseReason>,
+    close_reason: Option<CloseReason>,
 }
 
 impl Session {
@@ -312,7 +316,7 @@ impl Session {
         target: TargetAddr,
         source: IngressSource,
     ) -> Self {
-        Self {
+        let mut session = Self {
             id,
             client_addr,
             target,
@@ -322,33 +326,83 @@ impl Session {
             mode: ProcessingMode::Inspect,
             tls_policy: TlsPolicy::Undecided,
             application_protocol: ApplicationProtocol::Unknown,
+            tags: TagSet::new(),
             close_reason: None,
-        }
+        };
+        session.refresh_tags();
+        session
+    }
+
+    /// Returns the current session state.
+    #[must_use]
+    pub const fn state(&self) -> SessionState {
+        self.state
+    }
+
+    /// Returns the current protocol classification hint.
+    #[must_use]
+    pub const fn protocol(&self) -> ProtocolHint {
+        self.protocol
+    }
+
+    /// Returns the current processing mode.
+    #[must_use]
+    pub const fn mode(&self) -> ProcessingMode {
+        self.mode
+    }
+
+    /// Returns the current TLS policy.
+    #[must_use]
+    pub const fn tls_policy(&self) -> TlsPolicy {
+        self.tls_policy
+    }
+
+    /// Returns the current application protocol.
+    #[must_use]
+    pub const fn application_protocol(&self) -> ApplicationProtocol {
+        self.application_protocol
+    }
+
+    /// Returns tags derived from the current strong session state.
+    #[must_use]
+    pub const fn tags(&self) -> &TagSet {
+        &self.tags
+    }
+
+    /// Returns the recorded close reason, if the session has closed.
+    #[must_use]
+    pub const fn close_reason(&self) -> Option<CloseReason> {
+        self.close_reason
     }
 
     /// Sets the current session state.
     pub fn set_state(&mut self, state: SessionState) {
         self.state = state;
+        self.refresh_tags();
     }
 
     /// Sets the current protocol classification hint.
     pub fn set_protocol(&mut self, protocol: ProtocolHint) {
         self.protocol = protocol;
+        self.refresh_tags();
     }
 
     /// Sets the current processing mode.
     pub fn set_mode(&mut self, mode: ProcessingMode) {
         self.mode = mode;
+        self.refresh_tags();
     }
 
     /// Sets the current TLS policy.
     pub fn set_tls_policy(&mut self, tls_policy: TlsPolicy) {
         self.tls_policy = tls_policy;
+        self.refresh_tags();
     }
 
     /// Sets the current application protocol.
     pub fn set_application_protocol(&mut self, application_protocol: ApplicationProtocol) {
         self.application_protocol = application_protocol;
+        self.refresh_tags();
     }
 
     /// Closes the session and records the close reason.
@@ -356,6 +410,17 @@ impl Session {
         self.state = SessionState::Closed;
         self.mode = ProcessingMode::Closed;
         self.close_reason = Some(reason);
+        self.refresh_tags();
+    }
+
+    fn refresh_tags(&mut self) {
+        self.tags = derive_session_tags(
+            self.state,
+            self.mode,
+            self.protocol,
+            self.tls_policy,
+            self.application_protocol,
+        );
     }
 }
 
