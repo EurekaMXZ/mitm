@@ -243,9 +243,10 @@ fn copy_until_eof(
             }
         };
 
-        writer
-            .write_all(&buf[..read])
-            .map_err(|_| RawTunnelCloseReason::IoError)?;
+        if writer.write_all(&buf[..read]).is_err() {
+            record_first_event(first_event, RawTunnelCloseReason::IoError);
+            return Err(RawTunnelCloseReason::IoError);
+        }
         counter.fetch_add(read as u64, Ordering::Relaxed);
     }
 }

@@ -185,6 +185,119 @@ fn raw_tunnel_handler_records_upstream_closed_reason() {
 }
 
 #[test]
+fn raw_tunnel_handler_records_client_closed_reason() {
+    let (upstream_listener, target) = bind_upstream_listener();
+    let upstream_thread = thread::spawn(move || {
+        let (mut upstream_stream, _) = upstream_listener.accept().unwrap();
+        upstream_stream
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+
+        let mut received = Vec::new();
+        upstream_stream.read_to_end(&mut received).unwrap();
+        received
+    });
+
+    let (downstream_server, mut downstream_client) = connected_stream_pair();
+    let client_thread = thread::spawn(move || {
+        downstream_client.write_all(b"client-only").unwrap();
+        downstream_client.shutdown(Shutdown::Write).unwrap();
+    });
+
+    let mut ctx = raw_tunnel_context(StreamSlot::Raw(downstream_server), target);
+    let handler = RawTunnelHandler::new();
+    let outcome = handler.handle(&mut ctx);
+
+    assert_eq!(outcome.control, mitm_core::handler::HandlerResult::Stop);
+    client_thread.join().unwrap();
+    assert_eq!(upstream_thread.join().unwrap(), b"client-only".to_vec());
+
+    let report = ctx
+        .raw_tunnel_report
+        .expect("raw tunnel report is recorded");
+    assert_eq!(report.close_reason, RawTunnelCloseReason::ClientClosed);
+    assert_eq!(report.client_to_upstream_bytes, 11);
+    assert_eq!(ctx.session.close_reason(), Some(CloseReason::ClientClosed));
+}
+
+#[test]
+fn raw_tunnel_handler_records_tunnel_io_error_when_local_downstream_write_is_closed() {
+    let (upstream_listener, target) = bind_upstream_listener();
+    let upstream_thread = thread::spawn(move || {
+        let (mut upstream_stream, _) = upstream_listener.accept().unwrap();
+        upstream_stream.write_all(b"reply").unwrap();
+        thread::sleep(Duration::from_millis(100));
+    });
+
+    let (downstream_server, mut downstream_client) = connected_stream_pair();
+    downstream_server.shutdown(Shutdown::Write).unwrap();
+    let client_thread = thread::spawn(move || {
+        downstream_client
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        thread::sleep(Duration::from_millis(200));
+        let mut sink = [0_u8; 16];
+        let _ = downstream_client.read(&mut sink);
+    });
+
+    let mut ctx = raw_tunnel_context(StreamSlot::Raw(downstream_server), target);
+    let handler = RawTunnelHandler::new();
+    let outcome = handler.handle(&mut ctx);
+
+    assert_eq!(outcome.control, mitm_core::handler::HandlerResult::Stop);
+    client_thread.join().unwrap();
+    upstream_thread.join().unwrap();
+
+    let report = ctx
+        .raw_tunnel_report
+        .expect("raw tunnel report is recorded");
+    assert_eq!(report.close_reason, RawTunnelCloseReason::IoError);
+    assert_eq!(ctx.session.close_reason(), Some(CloseReason::TunnelIoError));
+}
+
+#[test]
+fn raw_tunnel_handler_preserves_upstream_closed_when_client_writes_after_close() {
+    let (upstream_listener, target) = bind_upstream_listener();
+    let upstream_thread = thread::spawn(move || {
+        let (mut upstream_stream, _) = upstream_listener.accept().unwrap();
+        upstream_stream.write_all(b"bye").unwrap();
+        upstream_stream.shutdown(Shutdown::Both).unwrap();
+    });
+
+    let (downstream_server, mut downstream_client) = connected_stream_pair();
+    let client_thread = thread::spawn(move || {
+        downstream_client
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+
+        let mut response = [0_u8; 3];
+        downstream_client.read_exact(&mut response).unwrap();
+        assert_eq!(&response, b"bye");
+
+        thread::sleep(Duration::from_millis(50));
+        let _ = downstream_client.write_all(b"after-close");
+        let _ = downstream_client.shutdown(Shutdown::Write);
+    });
+
+    let mut ctx = raw_tunnel_context(StreamSlot::Raw(downstream_server), target);
+    let handler = RawTunnelHandler::new();
+    let outcome = handler.handle(&mut ctx);
+
+    assert_eq!(outcome.control, mitm_core::handler::HandlerResult::Stop);
+    client_thread.join().unwrap();
+    upstream_thread.join().unwrap();
+
+    let report = ctx
+        .raw_tunnel_report
+        .expect("raw tunnel report is recorded");
+    assert_eq!(report.close_reason, RawTunnelCloseReason::UpstreamClosed);
+    assert_eq!(
+        ctx.session.close_reason(),
+        Some(CloseReason::UpstreamClosed)
+    );
+}
+
+#[test]
 fn raw_tunnel_handler_records_session_upstream_connect_failed_reason() {
     let unreachable_target = refused_target_addr();
     let (downstream_server, downstream_client) = connected_stream_pair();
@@ -204,38 +317,5 @@ fn raw_tunnel_handler_records_session_upstream_connect_failed_reason() {
     assert_eq!(
         ctx.session.close_reason(),
         Some(CloseReason::UpstreamConnectFailed)
-    );
-}
-
-#[test]
-fn raw_tunnel_handler_preserves_first_upstream_closed_event_when_later_write_fails() {
-    let (upstream_listener, target) = bind_upstream_listener();
-    let upstream_thread = thread::spawn(move || {
-        let (mut upstream_stream, _) = upstream_listener.accept().unwrap();
-        upstream_stream.write_all(b"bye").unwrap();
-        upstream_stream.shutdown(Shutdown::Write).unwrap();
-
-        let mut extra = [0_u8; 16];
-        let read = upstream_stream.read(&mut extra).unwrap_or(0);
-        assert_eq!(read, 0);
-    });
-
-    let (downstream_server, downstream_client) = connected_stream_pair();
-    drop(downstream_client);
-
-    let mut ctx = raw_tunnel_context(StreamSlot::Raw(downstream_server), target);
-    let handler = RawTunnelHandler::new();
-    let outcome = handler.handle(&mut ctx);
-
-    assert_eq!(outcome.control, mitm_core::handler::HandlerResult::Stop);
-    upstream_thread.join().unwrap();
-
-    let report = ctx
-        .raw_tunnel_report
-        .expect("raw tunnel report is recorded");
-    assert_eq!(report.close_reason, RawTunnelCloseReason::UpstreamClosed);
-    assert_eq!(
-        ctx.session.close_reason(),
-        Some(CloseReason::UpstreamClosed)
     );
 }
