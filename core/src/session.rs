@@ -8,7 +8,10 @@ use std::{
     net::{IpAddr, SocketAddr},
 };
 
-use crate::tags::{derive_session_tags, TagSet};
+use crate::{
+    http::{HttpRequestView, HttpResponseView},
+    tags::{derive_session_tags, TagSet},
+};
 
 /// Identifier for a SOCKS5 TCP connection session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -439,6 +442,10 @@ pub struct Transaction {
     pub session_id: SessionId,
     /// Current transaction state.
     pub state: TransactionState,
+    /// Captured request view, once request parsing completes.
+    pub request: Option<HttpRequestView>,
+    /// Captured response view, once response parsing completes.
+    pub response: Option<HttpResponseView>,
 }
 
 impl Transaction {
@@ -449,7 +456,36 @@ impl Transaction {
             id,
             session_id,
             state: TransactionState::RequestReading,
+            request: None,
+            response: None,
         }
+    }
+
+    /// Stores the parsed request and advances the transaction state.
+    pub fn record_request(&mut self, request: HttpRequestView) {
+        self.request = Some(request);
+        self.state = TransactionState::RequestReady;
+    }
+
+    /// Marks the transaction as waiting on upstream processing.
+    pub fn mark_upstream_pending(&mut self) {
+        self.state = TransactionState::UpstreamPending;
+    }
+
+    /// Marks the transaction as reading the upstream response.
+    pub fn mark_response_reading(&mut self) {
+        self.state = TransactionState::ResponseReading;
+    }
+
+    /// Stores the parsed response and advances the transaction state.
+    pub fn record_response(&mut self, response: HttpResponseView) {
+        self.response = Some(response);
+        self.state = TransactionState::ResponseReady;
+    }
+
+    /// Marks the transaction as completed.
+    pub fn mark_completed(&mut self) {
+        self.state = TransactionState::Completed;
     }
 }
 

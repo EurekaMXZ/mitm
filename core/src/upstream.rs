@@ -18,6 +18,16 @@ use crate::{
     session::{CloseReason, ProcessingMode, TargetAddr, TargetHost, TlsPolicy},
 };
 
+/// Opens a blocking upstream TCP connection for HTTP adapter traffic.
+///
+/// # Errors
+///
+/// Returns any address resolution or TCP connect error for `target`.
+pub fn connect_http_upstream(target: &TargetAddr) -> io::Result<TcpStream> {
+    let addr = target_to_socket_addr(target)?;
+    TcpStream::connect(addr)
+}
+
 /// Final close reason observed by the raw tunnel copy loop.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RawTunnelCloseReason {

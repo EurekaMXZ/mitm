@@ -5,12 +5,12 @@
 本节用于在上下文压缩、会话切换或多人协作时保留开发状态。每次开始开发前必须先读取并同步本节；每次结束开发后必须更新本节和下方阶段清单。
 
 ```text
-当前阶段：阶段 3 Task 3B 质量审查修正已完成
-当前重点：第三阶段已完成最终验证与双 reviewer 复审，当前重点转入阶段 4 的 HTTP/1.1 明文适配准备
-最近完成：已实现 Session 基础类型、SOCKS5 method negotiation、no-auth、CONNECT 解析、reply code 映射、阻塞式 SOCKS5 ingress、SessionInit 前置策略执行点和 close reason 记录；已补充 SOCKS5 ingress 普通 I/O 错误、domain、IPv6 和 unsupported ATYP 覆盖测试；已实现阶段 2 Task 2 的 Handler 基础类型、Intercept 基础类型、最小 AuditEvent、Decision 与 Patch 阶段合法性校验，并补充 Decision 适用矩阵测试；已完成阶段 2 Task 3 的 HandlerContext、StreamSlot、Tag 派生、线性 chain runner、非法 Decision 审计事件和状态迁移测试；已修正 Task 3 审查反馈中的 Pause 停止语义、Session 强状态 getter、runner 当前阶段校验说明、TagSet 单值命名空间覆盖、runner 阶段权威来源和多余 Decision 复制；已删除 docs/superpowers 目录；阶段 3 Task 1 已完成同步 PeekBuffer 与 ReplayStream 基础实现，并补充前缀顺序回放、分段读取、一次性消费测试；已修正 Task 1 功能审查反馈中的 PeekBuffer 单次读取语义与 ReplayStream prefix 优先返回语义；阶段 3 Task 2 已完成 HTTP/1、TLS ClientHello、h2c prior knowledge、Raw TCP 分类基础，h2c 与 Raw TCP 当前进入 RawTunnel 模式，TLS 仅记录协议提示；阶段 3 Task 3A 已完成 StreamSlot 真实 stream 所有权容器、ctx.stream 分类读取入口、NeedMore/Complete 纯函数结果、handler 层读取结果控制语义、PeekBuffer::from_vec、ReplayStream Write 委托和 loopback TcpStream replay 完整字节序测试；阶段 3 Task 3B 已完成同步阻塞版 RawTunnelHandler、raw_tunnel_report、会话级 `UpstreamConnectFailed` 与 `TunnelIoError` 关闭原因映射、首事件关闭归因保留规则，以及稳健的 raw tunnel upstream connect fail 与首事件保留测试；本轮已完成 `cargo fmt --all`、`cargo fmt --all -- --check`、`cargo test --workspace`、`cargo clippy --workspace --all-targets -- -D warnings`，并完成功能性审查与代码质量审查回收
-下一步：进入阶段 4，围绕 HTTP/1.1 request/response 解析、捕获与 HttpAdapter 事务循环开展实现；阶段 3 的补充测试项纳入后续补强
-阻塞项：无，保留若干非阻塞测试补强项
-最后同步时间：2026-05-01
+当前阶段：阶段 4 指定审查项已处理完成，阶段 5 准备中
+当前重点：阶段 5 的 `PatchSet`、request/response validation、hop-by-hop header 重建与 `Content-Length`、`Transfer-Encoding` 重算前置准备；本轮指定审查项已完成收口
+最近完成：已实现 Session 基础类型、SOCKS5 method negotiation、no-auth、CONNECT 解析、reply code 映射、阻塞式 SOCKS5 ingress、SessionInit 前置策略执行点和 close reason 记录；已补充 SOCKS5 ingress 普通 I/O 错误、domain、IPv6 和 unsupported ATYP 覆盖测试；已实现阶段 2 Task 2 的 Handler 基础类型、Intercept 基础类型、最小 AuditEvent、Decision 与 Patch 阶段合法性校验，并补充 Decision 适用矩阵测试；已完成阶段 2 Task 3 的 HandlerContext、StreamSlot、Tag 派生、线性 chain runner、非法 Decision 审计事件和状态迁移测试；已修正 Task 3 审查反馈中的 Pause 停止语义、Session 强状态 getter、runner 当前阶段校验说明、TagSet 单值命名空间覆盖、runner 阶段权威来源和多余 Decision 复制；已删除 docs/superpowers 目录；阶段 3 Task 1 已完成同步 PeekBuffer 与 ReplayStream 基础实现，并补充前缀顺序回放、分段读取、一次性消费测试；已修正 Task 1 功能审查反馈中的 PeekBuffer 单次读取语义与 ReplayStream prefix 优先返回语义；阶段 3 Task 2 已完成 HTTP/1、TLS ClientHello、h2c prior knowledge、Raw TCP 分类基础，h2c 与 Raw TCP 当前进入 RawTunnel 模式，TLS 仅记录协议提示；阶段 3 Task 3A 已完成 StreamSlot 真实 stream 所有权容器、ctx.stream 分类读取入口、NeedMore/Complete 纯函数结果、handler 层读取结果控制语义、PeekBuffer::from_vec、ReplayStream Write 委托和 loopback TcpStream replay 完整字节序测试；阶段 3 Task 3B 已完成同步阻塞版 RawTunnelHandler、raw_tunnel_report、会话级 `UpstreamConnectFailed` 与 `TunnelIoError` 关闭原因映射、首事件关闭归因保留规则，以及稳健的 raw tunnel upstream connect fail 与首事件保留测试；阶段 4 本轮已补齐空 chunked body request/response 序列化测试，修正 `101 Switching Protocols` 终止规则，补齐 downstream clean EOF、downstream 写失败、已建连 upstream 失败的 close reason 测试与映射
+下一步：进入阶段 5，优先实现 `PatchSet` 应用、request/response validation、hop-by-hop header 重建与 `Content-Length`、`Transfer-Encoding` 重算；阶段 3 的补充测试项仍需后续回补
+阻塞项：无；`Expect: 100-continue` streaming 作为后续架构演进事项单独跟踪
+最后同步时间：2026-05-03
 ```
 
 ## 开发状态维护规则
@@ -100,18 +100,23 @@
 
 目标：实现明文 HTTP/1.1 request/response 解析、捕获、透传和 keep-alive transaction 循环。
 
-- [ ] 定义 `HttpRequestView`、`HttpResponseView`、`HttpMessageView`。
-- [ ] 实现 raw header 保存，保留 header 顺序、大小写、重复 header。
-- [ ] 实现语义化 request/response 视图。
-- [ ] 实现 `HttpAdapter` transaction 循环。
-- [ ] 实现 request head/body 读取。
-- [ ] 实现 response head/body 读取。
-- [ ] 支持 `Content-Length` body。
-- [ ] 支持 `Transfer-Encoding: chunked` 基础解析与序列化。
-- [ ] 实现 HTTP/1.1 keep-alive。
-- [ ] 明确并实现 HTTP/1.1 pipelining 首版策略。
-- [ ] 处理 HTTP/1.0、`Connection: close`、1xx、204、304、HEAD 无 body。
-- [ ] 添加 GET、POST、keep-alive、chunked 集成测试。
+- [x] 定义 `HttpRequestView`、`HttpResponseView`、`HttpMessageView`。
+- [x] 实现 raw header 保存，保留 header 顺序、大小写、重复 header。
+- [x] 实现语义化 request/response 视图。
+- [x] 实现 `HttpAdapter` transaction 循环。
+- [x] 实现 request head/body 读取。
+- [x] 实现 response head/body 读取。
+- [x] 支持 `Content-Length` body。
+- [x] 支持 `Transfer-Encoding: chunked` 基础解析与序列化。
+- [x] 实现 HTTP/1.1 keep-alive。（当前已实现单连接顺序复用，后续补充更多边界集成测试）
+- [x] 明确并实现 HTTP/1.1 pipelining 首版策略。
+- [x] 处理 HTTP/1.0、`Connection: close`、1xx、204、304、HEAD 无 body。
+- [x] 添加 GET、POST、keep-alive、chunked 集成测试。
+- [x] 修正空 chunked body 序列化只输出单个终止块，并补齐 request/response 零长度测试。
+- [x] 修正 `101 Switching Protocols` 作为最终响应处理，适配层不再继续等待额外响应。
+- [x] 修正 downstream clean EOF 与 downstream 写失败时的 session 关闭归因，并补齐测试。
+- [x] 修正已建连后的 upstream I/O 错误归因为 `UpstreamClosed`，避免误记为 `UpstreamConnectFailed`。
+- [ ] `Expect: 100-continue` streaming 仍待后续设计与实现。（当前 HTTP adapter 仍采用完整缓冲模型。）
 
 ## 阶段 5：Patch、Validation 与 Manual Intercept
 

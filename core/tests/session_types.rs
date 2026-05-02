@@ -2,6 +2,7 @@
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
+use mitm_core::http::{HttpRequestView, HttpResponseView};
 use mitm_core::session::{
     ApplicationProtocol, CloseReason, Flow, FlowId, IngressSource, ProcessingMode, ProtocolHint,
     Session, SessionError, SessionId, SessionState, TargetAddr, TargetHost, TlsPolicy, Transaction,
@@ -128,6 +129,8 @@ fn session_transaction_new_starts_reading_request() {
     assert_eq!(transaction.id, TransactionId::new(3));
     assert_eq!(transaction.session_id, SessionId::new(2));
     assert_eq!(transaction.state, TransactionState::RequestReading);
+    assert_eq!(transaction.request, Option::<HttpRequestView>::None);
+    assert_eq!(transaction.response, Option::<HttpResponseView>::None);
 }
 
 #[test]
